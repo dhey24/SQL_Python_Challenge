@@ -5,42 +5,6 @@ import requests
 import pprint
 import json
 
-def sql_test():
-	conn = sqlite3.connect('vroom.db')
-	c = conn.cursor()
-
-	#create table
-	#### 
-	q = """
-		CREATE TABLE edmunds
-		(make text, model text, year integer, body_type text, 
-			certifiedUsedPrice real, usedPrivateParty real, usedTmvRetail real, 
-			usedTradeIn real)
-		"""
-	c.execute(q)
-
-	#insert row
-	q = """
-		INSERT INTO test
-		VALUES ('row1', 2)
-		"""
-	c.execute(q)
-
-	#commit changes
-	conn.commit()
-
-	#select contents of new table
-	q = """
-		SELECT *
-		FROM test
-		"""
-	for row in c.execute(q):
-		print row
-
-	#close connection
-	conn.close()
-
-
 def createTable():
 	conn = sqlite3.connect('vroom.db')
 	c = conn.cursor()
@@ -97,7 +61,6 @@ def insert_row(sql_input):
 			   sql_input['year'], sql_input['body_type'], \
 			   sql_input['certifiedUsedPrice'], sql_input['usedPrivateParty'], \
 			   sql_input['usedTmvRetail'], sql_input['usedTradeIn'])
-	print q
 	c.execute(q)
 
 	#commit changes
@@ -151,92 +114,94 @@ def getVinMileage(vin, mileage):
 		payload = {"api_key" : "kdj6mj65bapsf8wzc936j36u"}
 		url = "https://api.edmunds.com/api/vehicle/v2/vins/"+vin
 
-		#add error handling for request later
 		r = requests.get(url, params=payload)
 		response = r.json()
-		pprint.pprint(response)
+		#check and only load data for successful response
+		if r.status_code not in (200, 202):
+			print str(r.status_code), " | \n", response
+		else:
+			#put data for sql in variables
+			sql_input = {"vin" : vin}
+			##make
+			try:
+				sql_input["make"] = response["make"]["name"]
+			except:
+				print "Error: no [make][name] in response"
+				sql_input["make"] = ""
+			##model
+			try:
+				sql_input["model"] = response["model"]["id"]
+			except:
+				print "Error: no [model][id] or [name] in response"
+				sql_input["model"] = ""
+			##year
+			try:
+				sql_input["year"] = response["years"][0]["year"] #just take the first year
+			except:
+				print "Error: no [years][year] in response"
+				sql_input["year"] = ""
+			##body type
+			try:
+				#sql_input["primaryBodyType"] = response["categories"]["primaryBodyType"]
+				sql_input["body_type"] = response["years"][0]["styles"][0]["submodel"]["body"]
+			except:
+				print "Error: no [categories][primaryBodyType] in response"
+				sql_input["body_type"] = ""
 
-		#put data for sql in variables
-		sql_input = {"vin" : vin}
-		##make
-		try:
-			sql_input["make"] = response["make"]["name"]
-		except:
-			print "Error: no [make][name] in response"
-			sql_input["make"] = ""
-		##model
-		try:
-			sql_input["model"] = response["model"]["id"]
-		except:
-			print "Error: no [model][id] or [name] in response"
-			sql_input["model"] = ""
-		##year
-		try:
-			sql_input["year"] = response["years"][0]["year"] #just take the first year
-		except:
-			print "Error: no [years][year] in response"
-			sql_input["year"] = ""
-		##body type
-		try:
-			#sql_input["primaryBodyType"] = response["categories"]["primaryBodyType"]
-			sql_input["body_type"] = response["years"][0]["styles"][0]["submodel"]["body"]
-		except:
-			print "Error: no [categories][primaryBodyType] in response"
-			sql_input["body_type"] = ""
+			#Run another API call for the certifiedUsedPrice
+			#will need: styleid, condition, mileage, zip
+			try:
+				styleid = response["years"][0]["styles"][0]["id"]
+				condition = "Clean" 	#static b/c I could not find this value via VIN
+				zipcode = "90019"		#static for reason above
+			except:
+				print "could not retrieve syleid"
 
-		pprint.pprint(sql_input)
+			payload = {"api_key" : "kdj6mj65bapsf8wzc936j36u", 
+					   "styleid" : styleid,
+					   "fmt" : "json",
+					   "mileage" : str(int(mileage)),
+					   "condition" : condition,
+					   "zip" : zipcode}
+			url = "https://api.edmunds.com/v1/api/tmv/tmvservice/calculateusedtmv"
+			r = requests.get(url, params=payload)
+			response = r.json()
 
-		#Run another API call for the certifiedUsedPrice
-		#will need: styleid, condition, mileage, zip
-		try:
-			styleid = response["years"][0]["styles"][0]["id"]
-			condition = "Average" 	#static b/c I could not find this value via VIN
-			zipcode = "27514"		#static for reason above
-		except:
-			print "could not retrieve syleid"
+			##certified used price
+			try:
+				sql_input["certifiedUsedPrice"] = response["tmv"]["certifiedUsedPrice"]
+			except:
+				print "Error: no [tmv][certifiedUsedPrice] in response"
+				sql_input["usedPrivateParty"] = ""
+			##totals with options prices (assumes you will have all or none)
+			try:
+				sql_input["usedPrivateParty"] = response["tmv"]["totalWithOptions"]["usedPrivateParty"]
+				sql_input["usedTmvRetail"] = response["tmv"]["totalWithOptions"]["usedTmvRetail"]
+				sql_input["usedTradeIn"] = response["tmv"]["totalWithOptions"]["usedTradeIn"]
+			except:
+				print "Error: no [tmv][totalWithOptions][<price>] in response"
+				sql_input["usedPrivateParty"] = ""
+				sql_input["usedTmvRetail"] = ""
+				sql_input["usedTradeIn"] = ""
 
-		payload = {"api_key" : "kdj6mj65bapsf8wzc936j36u", 
-				   "styleid" : styleid,
-				   "fmt" : "json",
-				   "mileage" : str(int(mileage)),
-				   "condition" : condition,
-				   "zip" : zipcode}
-		url = "https://api.edmunds.com/v1/api/tmv/tmvservice/calculateusedtmv"
-		r = requests.get(url, params=payload)
-		response = r.json()
-		pprint.pprint(response)
-
-		##certified used price
-		try:
-			sql_input["certifiedUsedPrice"] = response["tmv"]["certifiedUsedPrice"]
-		except:
-			print "Error: no [tmv][certifiedUsedPrice] in response"
-			sql_input["usedPrivateParty"] = ""
-		##totals with options prices (assumes you will have all or none)
-		try:
-			sql_input["usedPrivateParty"] = response["tmv"]["totalWithOptions"]["usedPrivateParty"]
-			sql_input["usedTmvRetail"] = response["tmv"]["totalWithOptions"]["usedTmvRetail"]
-			sql_input["usedTradeIn"] = response["tmv"]["totalWithOptions"]["usedTradeIn"]
-		except:
-			print "Error: no [tmv][totalWithOptions][<price>] in response"
-			sql_input["usedPrivateParty"] = ""
-			sql_input["usedTmvRetail"] = ""
-			sql_input["usedTradeIn"] = ""
-
-		pprint.pprint(sql_input)
-
-		insert_row(sql_input)
-
-		select("1=1")
+			insert_row(sql_input)
 	else:
 		print vin, "already exists in db"
 
-def getCSV(csv):
+def getCSV(csvfile):
 	"""Get data for a csv with the following headers:
 		vin, make, model, year, trim, style, odometer
 		Note: odometer = mileage"""
+	import csv
+	filepath = "./" + str(csvfile)
+	with open(filepath, 'rb') as infile:
+		reader = csv.reader(infile)
+		header = reader.next()
+		for row in reader:
+			vin = row[0]
+			mileage = row[6]
+			getVinMileage(vin, mileage)
 
-	print "from csv option"
 
 def help():
 	"""help for the get opts"""
@@ -298,6 +263,7 @@ def main():
 			else:
 				assert False, "unhandled option"
 		print "csv = " + str(csv)
+		
 		#run script to get data
 		getCSV(csv)
 	else:
